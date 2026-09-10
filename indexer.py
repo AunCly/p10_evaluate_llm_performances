@@ -1,6 +1,7 @@
 # indexer.py
 import argparse
 import logging
+import sys
 from typing import Optional
 
 from utils.config import INPUT_DIR # INPUT_DATA_URL (décommentez si besoin)

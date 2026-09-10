@@ -1,17 +1,16 @@
-# utils/vector_store.py
 import os
 import pickle
 import faiss
 import numpy as np
 import logging
-from typing import List, Dict, Tuple, Optional
-from mistralai.client import MistralClient
-from mistralai.exceptions import MistralAPIException
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document # Utilisé pour le format attendu par le splitter
+from typing import List, Dict, Optional
+from langchain_core.documents import Document
+from google import genai
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from schemas.documents import RawDocument, Chunk, EmbeddedChunk
 
 from .config import (
-    MISTRAL_API_KEY, EMBEDDING_MODEL, EMBEDDING_BATCH_SIZE,
+    GOOGLE_API_KEY, EMBEDDING_MODEL, EMBEDDING_BATCH_SIZE,
     FAISS_INDEX_FILE, DOCUMENT_CHUNKS_FILE, CHUNK_SIZE, CHUNK_OVERLAP
 )
 
@@ -22,8 +21,8 @@ class VectorStoreManager:
 
     def __init__(self):
         self.index: Optional[faiss.Index] = None
-        self.document_chunks: List[Dict[str, any]] = []
-        self.mistral_client = MistralClient(api_key=MISTRAL_API_KEY)
+        self.document_chunks: List[Chunk] = []
+        self.client = genai.Client(api_key=GOOGLE_API_KEY)
         self._load_index_and_chunks()
 
     def _load_index_and_chunks(self):
@@ -43,7 +42,7 @@ class VectorStoreManager:
         else:
             logging.warning("Fichiers d'index Faiss ou de chunks non trouvés. L'index est vide.")
 
-    def _split_documents_to_chunks(self, documents: List[Dict[str, any]]) -> List[Dict[str, any]]:
+    def _split_documents_to_chunks(self, documents: List[RawDocument]) -> List[Chunk]:
         """Découpe les documents en chunks avec métadonnées."""
         logging.info(f"Découpage de {len(documents)} documents en chunks (taille={CHUNK_SIZE}, chevauchement={CHUNK_OVERLAP})...")
         text_splitter = RecursiveCharacterTextSplitter(
@@ -57,31 +56,32 @@ class VectorStoreManager:
         doc_counter = 0
         for doc in documents:
             # Convertit notre format de document en format Langchain Document pour le splitter
-            langchain_doc = Document(page_content=doc["page_content"], metadata=doc["metadata"])
+            langchain_doc = Document(page_content=doc.text)
             chunks = text_splitter.split_documents([langchain_doc])
-            logging.info(f"  Document '{doc['metadata'].get('filename', 'N/A')}' découpé en {len(chunks)} chunks.")
+            logging.info(f"Document '{doc.filename}' découpé en {len(chunks)} chunks.")
 
             # Enrichit chaque chunk avec des métadonnées supplémentaires
             for i, chunk in enumerate(chunks):
-                chunk_dict = {
-                    "id": f"{doc_counter}_{i}", # Identifiant unique du chunk (doc_index_chunk_index)
-                    "text": chunk.page_content,
-                    "metadata": {
-                        **chunk.metadata, # Métadonnées héritées du document (source, category, etc.)
-                        "chunk_id_in_doc": i, # Position du chunk dans son document d'origine
-                        "start_index": chunk.metadata.get("start_index", -1) # Position de début (en caractères)
-                    }
-                }
-                all_chunks.append(chunk_dict)
+                chunk = Chunk(
+                    id=f"{doc_counter}_{i}",
+                    text=chunk.page_content,
+                    source_document=doc.filename,
+                    metadadas={
+                        **chunk.metadata,
+                    },
+                    chunk_index_in_doc=i,
+                    start_char_index=chunk.metadata.get("start_index", -1)
+                )
+                all_chunks.append(chunk)
             doc_counter += 1
 
         logging.info(f"Total de {len(all_chunks)} chunks créés.")
         return all_chunks
 
-    def _generate_embeddings(self, chunks: List[Dict[str, any]]) -> Optional[np.ndarray]:
-        """Génère les embeddings pour une liste de chunks via l'API Mistral."""
-        if not MISTRAL_API_KEY:
-            logging.error("Impossible de générer les embeddings: MISTRAL_API_KEY manquante.")
+    def _generate_embeddings(self, chunks: List[Chunk]) -> Optional[np.ndarray]:
+        """Génère les embeddings pour une liste de chunks via l'API Google."""
+        if not GOOGLE_API_KEY:
+            logging.error("Impossible de générer les embeddings: GOOGLE_API_KEY manquante.")
             return None
         if not chunks:
             logging.warning("Aucun chunk fourni pour générer les embeddings.")
@@ -94,19 +94,15 @@ class VectorStoreManager:
         for i in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
             batch_num = (i // EMBEDDING_BATCH_SIZE) + 1
             batch_chunks = chunks[i:i + EMBEDDING_BATCH_SIZE]
-            texts_to_embed = [chunk["text"] for chunk in batch_chunks]
+            texts_to_embed = [chunk.text for chunk in batch_chunks]
 
             logging.info(f"  Traitement du lot {batch_num}/{total_batches} ({len(texts_to_embed)} chunks)")
             try:
-                response = self.mistral_client.embeddings(
+                response = self.client.models.embed_content(
                     model=EMBEDDING_MODEL,
-                    input=texts_to_embed
+                    contents=texts_to_embed
                 )
-                batch_embeddings = [data.embedding for data in response.data]
-                all_embeddings.extend(batch_embeddings)
-            except MistralAPIException as e:
-                logging.error(f"Erreur API Mistral lors de la génération d'embeddings (lot {batch_num}): {e}")
-                logging.error(f"  Détails: Status Code={e.status_code}, Message={e.message}")
+                all_embeddings.extend([embedding.values for embedding in response.embeddings])
             except Exception as e:
                 logging.error(f"Erreur inattendue lors de la génération d'embeddings (lot {batch_num}): {e}")
                  # Gérer l'erreur: ici on ajoute des vecteurs nuls pour ne pas bloquer
@@ -131,7 +127,6 @@ class VectorStoreManager:
                 logging.warning(f"Ajout de {num_failed} vecteurs nuls de dimension {dim} pour le lot échoué.")
                 all_embeddings.extend([np.zeros(dim, dtype='float32')] * num_failed)
 
-
         if not all_embeddings:
              logging.error("Aucun embedding n'a pu être généré.")
              return None
@@ -140,7 +135,7 @@ class VectorStoreManager:
         logging.info(f"Embeddings générés avec succès. Shape: {embeddings_array.shape}")
         return embeddings_array
 
-    def build_index(self, documents: List[Dict[str, any]]):
+    def build_index(self, documents: List[RawDocument]):
         """Construit l'index Faiss à partir des documents."""
         if not documents:
             logging.warning("Aucun document fourni pour construire l'index.")
@@ -214,17 +209,15 @@ class VectorStoreManager:
         if self.index is None or not self.document_chunks:
             logging.warning("Recherche impossible: l'index Faiss n'est pas chargé ou est vide.")
             return []
-        if not MISTRAL_API_KEY:
-             logging.error("Recherche impossible: MISTRAL_API_KEY manquante pour générer l'embedding de la requête.")
+        if not GOOGLE_API_KEY:
+             logging.error("Recherche impossible: GOOGLE_API_KEY manquante pour générer l'embedding de la requête.")
              return []
 
         logging.info(f"Recherche des {k} chunks les plus pertinents pour: '{query_text}'")
         try:
             # 1. Générer l'embedding de la requête
-            response = self.mistral_client.embeddings(
-                model=EMBEDDING_MODEL,
-                input=[query_text] # La requête doit être une liste
-            )
+            response = self.embedder.embed_query(query_text)
+
             query_embedding = np.array([response.data[0].embedding]).astype('float32')
 
             # Normaliser l'embedding de la requête pour la similarité cosinus
@@ -259,8 +252,8 @@ class VectorStoreManager:
                         results.append({
                             "score": similarity, # Score de similarité en pourcentage
                             "raw_score": raw_score, # Score brut pour débogage
-                            "text": chunk["text"],
-                            "metadata": chunk["metadata"] # Contient source, category, chunk_id_in_doc, start_index etc.
+                            "text": chunk.text,
+                            "metadata": chunk.metadata # Contient source, category, chunk_id_in_doc, start_index etc.
                         })
                     else:
                         logging.warning(f"Index Faiss {idx} hors limites (taille des chunks: {len(self.document_chunks)}).")
@@ -279,11 +272,6 @@ class VectorStoreManager:
                 logging.info(f"{len(results)} chunks pertinents trouvés.")
 
             return results
-
-        except MistralAPIException as e:
-            logging.error(f"Erreur API Mistral lors de la génération de l'embedding de la requête: {e}")
-            logging.error(f"  Détails: Status Code={e.status_code}, Message={e.message}")
-            return []
         except Exception as e:
             logging.error(f"Erreur inattendue lors de la recherche: {e}")
             return []

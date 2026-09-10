@@ -1,5 +1,7 @@
 # utils/data_loader.py
 import os
+
+import pymupdf
 import requests
 import zipfile
 import io
@@ -9,9 +11,10 @@ import logging
 import numpy as np
 from tqdm import tqdm # Ajout de tqdm
 
+from schemas.documents import RawDocument
+
 # --- Importations pour OCR ---
 try:
-    import fitz  # PyMuPDF
     from PIL import Image
     import easyocr
 
@@ -22,13 +25,13 @@ try:
 
 except ImportError as e:
     logging.warning(f"Modules OCR (PyMuPDF, Pillow, easyocr) non installés ou erreur: {e}. L'OCR pour PDF ne sera pas disponible.")
-    fitz = None
+    pymupdf = None
     Image = None
     easyocr = None
     reader = None
 except Exception as e:
     logging.error(f"Erreur inattendue lors du chargement des modules/modèle OCR: {e}")
-    fitz = None
+    pymupdf = None
     Image = None
     easyocr = None
     reader = None
@@ -40,17 +43,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 def extract_text_from_pdf_with_ocr(file_path: str) -> Optional[str]:
     """Extrait le texte d'un fichier PDF en utilisant l'OCR (EasyOCR)."""
-    if not fitz or not reader:
+    if not pymupdf or not reader:
         logging.warning("Modules/Modèle OCR non disponibles. Impossible d'effectuer l'OCR.")
         return None
 
     text_content = []
     try:
-        doc = fitz.open(file_path)
+        doc = pymupdf.open(file_path)
         # Utiliser tqdm pour la barre de progression
         for page_num in tqdm(range(len(doc)), desc=f"OCR de {os.path.basename(file_path)}"):
             page = doc.load_page(page_num)
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # Augmenter la résolution pour l'OCR
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2)) # Augmenter la résolution pour l'OCR
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             
             try:
@@ -208,7 +211,7 @@ def download_and_extract_zip(url: str, output_dir: str) -> bool:
         logging.error(f"Erreur inattendue lors du téléchargement/extraction: {e}")
         return False
 
-def load_and_parse_files(input_dir: str) -> List[Dict[str, any]]:
+def load_and_parse_files(input_dir: str) -> List[RawDocument]:
     """
     Charge et parse récursivement les fichiers d'un répertoire.
     Retourne une liste de dictionnaires, chacun représentant un document.
@@ -251,26 +254,19 @@ def load_and_parse_files(input_dir: str) -> List[Dict[str, any]]:
             # Si c'est un dictionnaire (plusieurs feuilles Excel), créer un doc par feuille
             if isinstance(extracted_content, dict):
                 for sheet_name, text in extracted_content.items():
-                    documents.append({
-                        "page_content": text,
-                        "metadata": {
-                            "source": f"{str(relative_path)} (Feuille: {sheet_name})",
-                            "filename": file_path.name,
-                            "sheet": sheet_name,
-                            "category": source_folder,
-                            "full_path": str(file_path.resolve())
-                        }
-                    })
+                    documents.append(RawDocument(
+                        source=f"{str(relative_path)} (Feuille: {sheet_name})",
+                        filename=file_path.name,
+                        full_path=file_path.resolve(),
+                        text=text,
+                    ))
             else: # Pour tous les autres types de fichiers
-                 documents.append({
-                    "page_content": extracted_content,
-                    "metadata": {
-                        "source": str(relative_path),
-                        "filename": file_path.name,
-                        "category": source_folder,
-                        "full_path": str(file_path.resolve())
-                    }
-                })
+                 documents.append(RawDocument(
+                    source=str(relative_path),
+                    filename=file_path.name,
+                    full_path=file_path.resolve(),
+                    text=extracted_content
+                ))
 
     logging.info(f"{len(documents)} documents chargés et parsés.")
     return documents

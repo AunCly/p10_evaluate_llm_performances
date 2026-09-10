@@ -6,15 +6,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Clé API ---
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
-if not MISTRAL_API_KEY:
-    print("⚠️ Attention: La clé API Mistral (MISTRAL_API_KEY) n'est pas définie dans le fichier .env")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    print("⚠️ Attention: La clé API Google (GOOGLE_API_KEY) n'est pas définie dans le fichier .env")
     # Vous pouvez choisir de lever une exception ici ou de continuer avec des fonctionnalités limitées
-    # raise ValueError("Clé API Mistral manquante. Veuillez la définir dans le fichier .env")
+    # raise ValueError("Clé API Google manquante. Veuillez la définir dans le fichier .env")
 
-# --- Modèles Mistral ---
-EMBEDDING_MODEL = "mistral-embed"
-MODEL_NAME = "mistral-small-latest" # Ou un autre modèle comme mistral-large-latest
+# --- Modèles Google ---
+EMBEDDING_MODEL = "gemini-embedding-001"
+MODEL_NAME = "gemini-3.5-flash-lite" # Ou un autre modèle comme gemini-3.7-flash
 
 # --- Configuration de l'Indexation ---
 # INPUT_DATA_URL = os.getenv("INPUT_DATA_URL") # Décommentez si vous utilisez une URL
