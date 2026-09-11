@@ -2,8 +2,11 @@
 import os
 from dotenv import load_dotenv
 
+# Racine du projet (indépendante du répertoire courant depuis lequel le script est lancé)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Charger les variables d'environnement du fichier .env
-load_dotenv()
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 # --- Clé API ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -18,8 +21,8 @@ MODEL_NAME = "gemini-3.5-flash-lite" # Ou un autre modèle comme gemini-3.7-flas
 
 # --- Configuration de l'Indexation ---
 # INPUT_DATA_URL = os.getenv("INPUT_DATA_URL") # Décommentez si vous utilisez une URL
-INPUT_DIR = "inputs"                # Dossier pour les données sources après extraction
-VECTOR_DB_DIR = "vector_db"         # Dossier pour stocker l'index Faiss et les chunks
+INPUT_DIR = os.path.join(BASE_DIR, "inputs")            # Dossier pour les données sources après extraction
+VECTOR_DB_DIR = os.path.join(BASE_DIR, "vector_db")      # Dossier pour stocker l'index Faiss et les chunks
 FAISS_INDEX_FILE = os.path.join(VECTOR_DB_DIR, "faiss_index.idx")
 DOCUMENT_CHUNKS_FILE = os.path.join(VECTOR_DB_DIR, "document_chunks.pkl")
 
@@ -31,7 +34,7 @@ EMBEDDING_BATCH_SIZE = 32           # Taille des lots pour l'API d'embedding
 SEARCH_K = 5                        # Nombre de documents à récupérer par défaut
 
 # --- Configuration de la Base de Données ---
-DATABASE_DIR = "database"
+DATABASE_DIR = os.path.join(BASE_DIR, "database")
 DATABASE_FILE = os.path.join(DATABASE_DIR, "interactions.db")
 DATABASE_URL = f"sqlite:///{DATABASE_FILE}" # URL pour SQLAlchemy
 
