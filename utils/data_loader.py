@@ -10,8 +10,18 @@ from typing import List, Dict, Optional, Union
 import logging
 import numpy as np
 from tqdm import tqdm # Ajout de tqdm
+from pydantic import ValidationError
 
 from schemas.documents import RawDocument
+
+FORMAT_BY_EXTENSION = {
+    ".pdf": "pdf",
+    ".docx": "docx",
+    ".txt": "txt",
+    ".csv": "csv",
+    ".xlsx": "xlsx",
+    ".xls": "xlsx",
+}
 
 # --- Importations pour OCR ---
 try:
@@ -40,7 +50,6 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Fonctions d'extraction de texte ---
-
 def extract_text_from_pdf_with_ocr(file_path: str) -> Optional[str]:
     """Extrait le texte d'un fichier PDF en utilisant l'OCR (EasyOCR)."""
     if not pymupdf or not reader:
@@ -78,33 +87,37 @@ def extract_text_from_pdf_with_ocr(file_path: str) -> Optional[str]:
         logging.error(f"Erreur lors de l'ouverture ou du traitement OCR du PDF {file_path}: {e}")
         return None
 
-def extract_text_from_pdf(file_path: str) -> Optional[str]:
-    """Extrait le texte d'un fichier PDF, avec fallback OCR si peu de texte est trouvé."""
+def extract_text_from_pdf(file_path: str) -> tuple[Optional[str], bool]:
+    """Extrait le texte d'un fichier PDF, avec fallback OCR si peu de texte est trouvé.
+    Retourne un tuple (texte, extracted_via_ocr) : le second élément indique si le
+    texte provient du fallback OCR (EasyOCR) plutôt que de l'extraction standard
+    (PyPDF2), pour pouvoir isoler les documents "bruités" en aval.
+    """
     try:
         from PyPDF2 import PdfReader
         reader = PdfReader(file_path)
         text = "".join(page.extract_text() + "\n" for page in reader.pages if page.extract_text())
-        
+
         if len(text.strip()) < 100: # Si très peu de texte est extrait, tenter l'OCR
             logging.info(f"Peu de texte trouvé dans {file_path} via extraction standard ({len(text.strip())} caractères). Tentative d'OCR...")
             ocr_text = extract_text_from_pdf_with_ocr(file_path)
             if ocr_text:
-                return ocr_text
+                return ocr_text, True
             else:
                 logging.warning(f"L'OCR n'a pas non plus produit de texte significatif pour {file_path}.")
-                return text # Retourne le peu de texte trouvé ou vide
-        
+                return text, False # Retourne le peu de texte trouvé ou vide
+
         logging.info(f"Texte extrait de PDF: {file_path} ({len(text)} caractères)")
-        return text
+        return text, False
     except Exception as e:
         logging.error(f"Erreur extraction PDF {file_path}: {e}. Tentative d'OCR en dernier recours...")
         # Si l'extraction standard échoue complètement, tenter l'OCR
         ocr_text = extract_text_from_pdf_with_ocr(file_path)
         if ocr_text:
-            return ocr_text
+            return ocr_text, True
         else:
             logging.warning(f"L'OCR n'a pas non plus produit de texte significatif après échec de l'extraction standard pour {file_path}.")
-            return None
+            return None, False
 
 
 def extract_text_from_docx(file_path: str) -> Optional[str]:
@@ -232,8 +245,9 @@ def load_and_parse_files(input_dir: str) -> List[RawDocument]:
             logging.debug(f"Traitement du fichier: {relative_path} (Dossier source: {source_folder})")
 
             extracted_content = None
+            extracted_via_ocr = False
             if ext == ".pdf":
-                extracted_content = extract_text_from_pdf(str(file_path))
+                extracted_content, extracted_via_ocr = extract_text_from_pdf(str(file_path))
             elif ext == ".docx":
                 extracted_content = extract_text_from_docx(str(file_path))
             elif ext == ".txt":
@@ -250,23 +264,39 @@ def load_and_parse_files(input_dir: str) -> List[RawDocument]:
             if not extracted_content:
                 logging.warning(f"Aucun contenu n'a pu être extrait de {relative_path}")
                 continue
-            
+
+            doc_format = FORMAT_BY_EXTENSION[ext]
+
             # Si c'est un dictionnaire (plusieurs feuilles Excel), créer un doc par feuille
             if isinstance(extracted_content, dict):
                 for sheet_name, text in extracted_content.items():
+                    try:
+                        documents.append(RawDocument(
+                            source=f"{str(relative_path)} (Feuille: {sheet_name})",
+                            filename=file_path.name,
+                            full_path=file_path.resolve(),
+                            category=source_folder,
+                            format=doc_format,
+                            sheet=sheet_name,
+                            text=text,
+                            extracted_via_ocr=False,
+                        ))
+                    except ValidationError as e:
+                        logging.error(f"Document rejeté (feuille '{sheet_name}' de {relative_path}): {e}")
+            else: # Pour tous les autres types de fichiers
+                try:
                     documents.append(RawDocument(
-                        source=f"{str(relative_path)} (Feuille: {sheet_name})",
+                        source=str(relative_path),
                         filename=file_path.name,
                         full_path=file_path.resolve(),
-                        text=text,
+                        category=source_folder,
+                        format=doc_format,
+                        sheet=None,
+                        text=extracted_content,
+                        extracted_via_ocr=extracted_via_ocr,
                     ))
-            else: # Pour tous les autres types de fichiers
-                 documents.append(RawDocument(
-                    source=str(relative_path),
-                    filename=file_path.name,
-                    full_path=file_path.resolve(),
-                    text=extracted_content
-                ))
+                except ValidationError as e:
+                    logging.error(f"Document rejeté ({relative_path}): {e}")
 
     logging.info(f"{len(documents)} documents chargés et parsés.")
     return documents
