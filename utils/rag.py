@@ -8,6 +8,7 @@ from google.genai import types
 from schemas.rag_io import RagAnswer, RetrievedContext
 from utils.config import GOOGLE_API_KEY, MODEL_NAME, SEARCH_K
 from utils.vector_store import VectorStoreManager
+import logfire
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -32,6 +33,8 @@ class Rag:
     """
 
     def __init__(self, model: str = MODEL_NAME,search_k: int = SEARCH_K, system_prompt_template: str = SYSTEM_PROMPT_TEMPLATE,):
+
+        logfire.info('Instanciation du Rag !')
 
         if not GOOGLE_API_KEY:
             raise ValueError("Clé API Google manquante (GOOGLE_API_KEY).")
@@ -58,6 +61,8 @@ class Rag:
 
     def retrieve(self, question: str, k: Optional[int] = None) -> List[RetrievedContext]:
         """Recherche les chunks pertinents dans le vector store pour une question."""
+        logfire.info('Recherche de contexte pour la question : {question}', question=question)
+
         try:
             return self.vector_store.search(question, k=k or self.search_k)
         except Exception:
@@ -70,6 +75,9 @@ class Rag:
             context_str=self._format_context(context), question=question
         )
         try:
+
+            logfire.info('Prompt final : {prompt}', prompt=prompt)
+
             response = self.client.models.generate_content(
                 model=self.model,
                 contents=prompt,
@@ -85,9 +93,14 @@ class Rag:
 
     def answer(self, question: str, k: Optional[int] = None) -> RagAnswer:
         """Exécute le pipeline RAG complet (retrieve + generate) et retourne une réponse validée."""
+
+        logfire.info('Pipeline RAG exécuté pour la question : {question}', question=question)
+
         context = self.retrieve(question, k=k)
         answer_text = self.generate(question, context)
         sources = sorted({c.source for c in context})
         confidence = max((c.score for c in context), default=0.0) / 100
+
+        logfire.info('Answer : {answer}', answer=answer_text)
 
         return RagAnswer(answer=answer_text, sources=sources, confidence=confidence)

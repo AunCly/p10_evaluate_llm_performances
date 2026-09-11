@@ -2,6 +2,10 @@
 import streamlit as st
 import logging
 
+import logfire
+
+logfire.configure()
+
 # --- Importations depuis vos modules ---
 try:
     from utils.config import APP_TITLE, NAME

@@ -1,6 +1,7 @@
 import os
 import pickle
 import faiss
+import logfire
 import numpy as np
 import logging
 from typing import List, Optional
@@ -302,6 +303,8 @@ class VectorStoreManager:
                 logging.info(f"{len(results)} chunks pertinents trouvés (score minimum: {min_score_percent:.2f}%).")
             else:
                 logging.info(f"{len(results)} chunks pertinents trouvés.")
+
+            logfire.info('Résultats de la recherche : {results}', results=results)
 
             return results
         except Exception as e:
