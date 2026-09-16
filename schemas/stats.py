@@ -1,0 +1,49 @@
+from database.base import Base
+
+class Stat(Base):
+    __tablename__ = "stats"
+
+    id: int
+    player_id: int
+    gp: int
+    w: int
+    l: int
+    min: float
+    pts: float
+    fgm: float
+    fga: float
+    fg_pct: float
+    three_p_pm: float
+    three_p_pa: float
+    three_p_pct: float
+    ftm: float
+    fta: float
+    ft_pct: float
+    oreb: float
+    dreb: float
+    reb: float
+    ast: float
+    tov: float
+    stl: float
+    blk: float
+    pf: float
+    fp: float
+    dd2: int
+    td3: int
+    plus_minus: float
+    offrtg: float
+    defrtg: float
+    netrtg: float
+    ast_pct: float
+    ast_to: float
+    ast_ratio: float
+    oreb_pct: float
+    dreb_pct: float
+    reb_pct: float
+    to_ratio: float
+    efg_pct: float
+    ts_pct: float
+    usg_pct: float
+    pace: float
+    pie: float
+    poss: float
