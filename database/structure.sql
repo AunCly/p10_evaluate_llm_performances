@@ -1,17 +1,17 @@
 CREATE TABLE teams (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
     name VARCHAR(100) NOT NULL
 );
 
 CREATE TABLE players (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     team_id INT REFERENCES teams(id),
     age INT
 );
 
 CREATE TABLE stats (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
     player_id INT REFERENCES players(id),
     gp INT,
     w INT,
@@ -58,7 +58,7 @@ CREATE TABLE stats (
 );
 
 CREATE TABLE matches (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
     season VARCHAR(10) NOT NULL,
     date DATE NOT NULL,
     home_team_id INT REFERENCES teams(id),
@@ -68,7 +68,7 @@ CREATE TABLE matches (
 );
 
 CREATE TABLE reports (
-    id SERIAL PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
     source_file VARCHAR(255) NOT NULL,
     category VARCHAR(50) NOT NULL,
     ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

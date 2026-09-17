@@ -8,7 +8,7 @@ logfire.configure()
 
 # --- Importations depuis vos modules ---
 try:
-    from utils.config import APP_TITLE, NAME
+    from utils.config import APP_TITLE, NAME, MODEL_NAME
     from utils.rag import Rag
 except ImportError as e:
     st.error(f"Erreur d'importation: {e}. Vérifiez la structure de vos dossiers et les fichiers dans 'utils'.")
@@ -46,7 +46,7 @@ if "messages" not in st.session_state:
 
 # --- Interface Utilisateur Streamlit ---
 st.title(APP_TITLE)
-st.caption(f"Assistant virtuel pour {NAME} | Modèle: {rag.model if rag else 'indisponible'}")
+st.caption(f"Assistant virtuel pour {NAME} | Modèle: {MODEL_NAME}")
 
 # Affichage des messages de l'historique (pour l'UI)
 for message in st.session_state.messages:

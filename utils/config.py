@@ -17,7 +17,7 @@ if not GOOGLE_API_KEY:
 
 # --- Modèles Google ---
 EMBEDDING_MODEL = "gemini-embedding-001"
-MODEL_NAME = "gemini-3.5-flash-lite" # Ou un autre modèle comme gemini-3.7-flash
+MODEL_NAME = "google:gemini-3.5-flash-lite"
 
 # --- Configuration de l'Indexation ---
 # INPUT_DATA_URL = os.getenv("INPUT_DATA_URL") # Décommentez si vous utilisez une URL

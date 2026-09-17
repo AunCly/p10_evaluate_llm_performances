@@ -33,5 +33,5 @@ class RetrievedContext(BaseModel):
 class RagAnswer(BaseModel):
     """Réponse produite par le tool RAG, avec ses sources et sa confiance."""
     answer: str = Field(..., min_length=1)
-    sources: List[str] = Field(default_factory=list)
-    confidence: float = Field(..., ge=0, le=1)
+    #sources: List[str] = Field(default_factory=list)
+    #confidence: float = Field(..., ge=0, le=1)
