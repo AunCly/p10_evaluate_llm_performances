@@ -1,135 +1,96 @@
-# Assistant RAG avec Mistral
+# NBA Analyst AI — Assistant RAG + SQL (Gemini)
 
-Ce projet implémente un assistant virtuel basé sur le modèle Mistral, utilisant la technique de Retrieval-Augmented Generation (RAG) pour fournir des réponses précises et contextuelles à partir d'une base de connaissances personnalisée.
+Assistant virtuel pour analystes/entraîneurs NBA, développé pour **SportSee** (cf. [`mission.md`](mission.md)). Il combine deux sources de contexte pour répondre aux questions :
+
+- une **base de connaissances textuelle** (discussions Reddit sur la ligue) interrogée par recherche vectorielle (FAISS) ;
+- une **base de statistiques joueurs** (issue d'un fichier Excel) interrogée en SQL.
+
+Un agent [Pydantic AI](https://pydantic.dev/docs/ai/overview/) (modèle **Google Gemini**) choisit dynamiquement quelle(s) source(s) interroger, puis synthétise une réponse sourcée.
+
+> 📖 Pour l'architecture détaillée, le rôle de chaque module, le pipeline d'évaluation et les limitations connues, voir **[`documentation.md`](documentation.md)**.
 
 ## Fonctionnalités
 
-- 🔍 **Recherche sémantique** avec FAISS pour trouver les documents pertinents
-- 🤖 **Génération de réponses** avec les modèles Mistral (Small ou Large)
-- ⚙️ **Paramètres personnalisables** (modèle, nombre de documents, score minimum)
+- 🔍 **Recherche sémantique** (FAISS + embeddings Gemini) sur des documents indexés depuis `inputs/`
+- 🧮 **Tool SQL** : l'agent interroge une base SQLite de statistiques joueurs (par nom de joueur ou requête libre générée par le LLM)
+- ✅ **Entrées/sorties validées par Pydantic** à chaque étape du pipeline (documents, chunks, embeddings, réponses)
+- 📊 **Évaluation automatisée** du système (Pydantic Evals, LLM-judge) : fidélité, pertinence, précision et rappel du contexte récupéré
+- 🔭 **Traçabilité** via Pydantic Logfire (chaque appel de tool, requête et réponse)
 
 ## Prérequis
 
-- Python 3.9+ 
-- Clé API Mistral (obtenue sur [console.mistral.ai](https://console.mistral.ai/))
+- Python 3.13+
+- Une clé API Google Gemini ([aistudio.google.com](https://aistudio.google.com/))
 
 ## Installation
 
-1. **Cloner le dépôt**
-
 ```bash
-git clone <url-du-repo>
-cd <nom-du-repo>
+git clone git@github.com:AunCly/p10_evaluate_llm_performances.git
+cd p10_evaluate_llm_performances
+
+# avec uv (recommandé)
+uv sync
 ```
 
-2. **Créer un environnement virtuel**
+Créer un fichier `.env` à la racine :
 
-```bash
-# Création de l'environnement virtuel
-python -m venv venv
-
-# Activation de l'environnement virtuel
-# Sur Windows
-venv\Scripts\activate
-# Sur macOS/Linux
-source venv/bin/activate
+```dotenv
+GOOGLE_API_KEY=votre_clé_api_google
+MODEL_ID=gemini-3.5-flash-lite
+EMBEDDING_MODEL=gemini-embedding-001
+INPUT_DIR=inputs
+OUTPUT_DIR=vector_db
+FAISS_INDEX_FILE=vector_db/faiss_index.idx
+DOCUMENT_CHUNKS_FILE=vector_db/document_chunks.pkl
 ```
 
-3. **Installer les dépendances**
-
-```bash
-pip install -r requirements.txt
-```
-
-4. **Configurer la clé API**
-
-Créez un fichier `.env` à la racine du projet avec le contenu suivant :
-
-```
-MISTRAL_API_KEY=votre_clé_api_mistral
-```
+> `requirements.txt` correspond à une version antérieure du projet (Mistral/LangChain) et n'est plus à jour ; `pyproject.toml` est la source de vérité pour les dépendances.
 
 ## Structure du projet
 
 ```
 .
-├── MistralChat.py          # Application Streamlit principale
-├── indexer.py              # Script pour indexer les documents
-├── inputs/                 # Dossier pour les documents sources
-├── vector_db/              # Dossier pour l'index FAISS et les chunks
-├── database/               # Base de données SQLite pour les interactions
-└── utils/                  # Modules utilitaires
-    ├── config.py           # Configuration de l'application
-    ├── database.py         # Gestion de la base de données
-    └── vector_store.py     # Gestion de l'index vectoriel
-
+├── chat.py               # Application Streamlit (UI de chat)
+├── indexer.py             # Indexation des documents (construction de l'index FAISS)
+├── database/               # Schéma SQL, création et modèles ORM de la base de stats
+├── inputs/                 # Documents sources (PDF, Excel)
+├── vector_db/               # Index FAISS et chunks (générés par indexer.py)
+├── schemas/                 # Modèles Pydantic (validation des entrées/sorties)
+└── utils/
+    ├── config.py            # Configuration (.env, chemins, constantes)
+    ├── data_loader.py        # Extraction de texte multi-format (+ OCR)
+    ├── vector_store.py        # Index FAISS et recherche sémantique
+    ├── load_excel_to_db.py     # Ingestion du fichier Excel vers la base SQLite
+    ├── rag.py                  # Agent Pydantic AI (RAG + SQL)
+    └── evaluate.py              # Évaluation du système (Pydantic Evals)
 ```
 
 ## Utilisation
 
-### 1. Ajouter des documents
-
-Placez vos documents dans le dossier `inputs/`. Les formats supportés sont :
-- PDF
-- TXT
-- DOCX
-- CSV
-- JSON
-
-Vous pouvez organiser vos documents dans des sous-dossiers pour une meilleure organisation.
-
-### 2. Indexer les documents
-
-Exécutez le script d'indexation pour traiter les documents et créer l'index FAISS :
-
 ```bash
+# 1. Créer et peupler la base de statistiques (une fois)
+python database/create_database.py
+python -m utils.load_excel_to_db
+
+# 2. Construire l'index vectoriel à partir des documents de inputs/ (une fois, ou après ajout de documents)
 python indexer.py
+
+# 3. Lancer l'interface de chat
+streamlit run chat.py
 ```
 
-Ce script va :
-1. Charger les documents depuis le dossier `inputs/`
-2. Découper les documents en chunks
-3. Générer des embeddings avec Mistral
-4. Créer un index FAISS pour la recherche sémantique
-5. Sauvegarder l'index et les chunks dans le dossier `vector_db/`
+L'application est accessible sur http://localhost:8501.
 
-### 3. Lancer l'application
+### Évaluer le système
 
 ```bash
-streamlit run MistralChat.py
+python -m utils.evaluate
 ```
 
-L'application sera accessible à l'adresse http://localhost:8501 dans votre navigateur.
+Exécute le pipeline RAG+SQL sur un jeu de questions métier et note les réponses (fidélité, pertinence, précision/rappel du contexte récupéré) via un LLM-judge Gemini.
 
+## Pour aller plus loin
 
-## Modules principaux
-
-### `utils/vector_store.py`
-
-Gère l'index vectoriel FAISS et la recherche sémantique :
-- Chargement et découpage des documents
-- Génération des embeddings avec Mistral
-- Création et interrogation de l'index FAISS
-
-### `utils/query_classifier.py`
-
-Détermine si une requête nécessite une recherche RAG :
-- Analyse des mots-clés
-- Classification avec le modèle Mistral
-- Détection des questions spécifiques vs générales
-
-### `utils/database.py`
-
-Gère la base de données SQLite pour les interactions :
-- Enregistrement des questions et réponses
-- Stockage des feedbacks utilisateurs
-- Récupération des statistiques
-
-## Personnalisation
-
-Vous pouvez personnaliser l'application en modifiant les paramètres dans `utils/config.py` :
-- Modèles Mistral utilisés
-- Taille des chunks et chevauchement
-- Nombre de documents par défaut
-- Nom de la commune ou organisation
-
+- [`documentation.md`](documentation.md) — documentation technique complète (architecture détaillée, schéma de base de données, pipeline d'indexation, évaluation, limitations connues)
+- [`mission.md`](mission.md) — brief de mission et choix techniques validés
+- [`plan.md`](plan.md) — plan de mise en œuvre et audit détaillé du prototype initial

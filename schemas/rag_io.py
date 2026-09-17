@@ -30,8 +30,15 @@ class RetrievedContext(BaseModel):
         return v
 
 
+class SqlQueryResult(BaseModel):
+    """Résultat d'une requête SQL exécutée par l'agent (stats joueur ou requête libre)."""
+    query: str = Field(..., min_length=1)
+    result: str = Field(..., min_length=1)
+
+
 class RagAnswer(BaseModel):
     """Réponse produite par le tool RAG, avec ses sources et sa confiance."""
     answer: str = Field(..., min_length=1)
-    #sources: List[str] = Field(default_factory=list)
+    retrieved_contexts: List[RetrievedContext] = Field(default_factory=list)
+    sql_results: List[SqlQueryResult] = Field(default_factory=list)
     #confidence: float = Field(..., ge=0, le=1)

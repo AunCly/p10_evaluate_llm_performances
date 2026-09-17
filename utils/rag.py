@@ -2,12 +2,11 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from google import genai
 from pydantic_ai import RunContext, Agent, Tool
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from schemas.rag_io import RagAnswer, RetrievedContext
+from schemas.rag_io import RagAnswer, RetrievedContext, SqlQueryResult
 from utils.config import GOOGLE_API_KEY, MODEL_NAME, SEARCH_K
 from utils.vector_store import VectorStoreManager
 import logfire
@@ -73,6 +72,68 @@ Lexique de NBA:
 * **pace** (*Pace*) : Rythme de jeu (nombre de possessions estimé pour 48 minutes).
 * **pie** (*Player Impact Estimate*) : Mesure globale de l'impact et de la contribution statistique d'un joueur par rapport au match.
 * **poss** (*Possessions*) : Nombre total de possessions jouées.
+
+Voici le schema de la base de données SQLite pour les statistiques des joueurs :
+```sql
+CREATE TABLE teams (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR(100) NOT NULL
+);
+
+CREATE TABLE players (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    team_id INT REFERENCES teams(id),
+    age INT
+);
+
+CREATE TABLE stats (
+    id INTEGER PRIMARY KEY,
+    player_id INT REFERENCES players(id),
+    gp INT,
+    w INT,
+    l INT,
+    min FLOAT,
+    pts FLOAT,
+    fgm FLOAT,
+    fga FLOAT,
+    fg_pct FLOAT,
+    three_p_pm FLOAT,
+    three_p_pa FLOAT,
+    three_p_pct FLOAT,
+    ftm FLOAT,
+    fta FLOAT,
+    ft_pct FLOAT,
+    oreb FLOAT,
+    dreb FLOAT,
+    reb FLOAT,
+    ast FLOAT,
+    tov FLOAT,
+    stl FLOAT,
+    blk FLOAT,
+    pf FLOAT,
+    fp FLOAT,
+    dd2 INT,
+    td3 INT,
+    plus_minus FLOAT,
+    offrtg FLOAT,
+    defrtg FLOAT,
+    netrtg FLOAT,
+    ast_pct FLOAT,
+    ast_to FLOAT,
+    ast_ratio FLOAT,
+    oreb_pct FLOAT,
+    dreb_pct FLOAT,
+    reb_pct FLOAT,
+    to_ratio FLOAT,
+    efg_pct FLOAT,
+    ts_pct FLOAT,
+    usg_pct FLOAT,
+    pace FLOAT,
+    pie FLOAT,
+    poss FLOAT
+);
+```
 """
 
 class Rag:
@@ -95,7 +156,8 @@ class Rag:
             model=MODEL_NAME,
             system_prompt=system_prompt_template,
             tools=[
-                Tool(self.get_stats, takes_ctx=True),
+                Tool(self.get_player_stats, takes_ctx=True),
+                Tool(self.query_database, takes_ctx=True),
                 Tool(self.index_search, takes_ctx=True)
             ]
         )
@@ -106,9 +168,13 @@ class Rag:
                 "Index vectoriel introuvable ou vide. Exécutez 'python indexer.py' avant d'utiliser Rag()."
             )
 
-    def get_stats(self, ctx: RunContext[str], player_name: str) -> str:
+        # Contexte accumulé pendant l'exécution en cours de l'agent (réinitialisé à chaque appel à `answer`).
+        self._retrieved_contexts: List[RetrievedContext] = []
+        self._sql_results: List[SqlQueryResult] = []
+
+    def get_player_stats(self, ctx: RunContext[str], player_name: str) -> str:
         """Retourne les statistiques d'un joueur depuis la base de données SQLite."""
-        logfire.info('Utilisation de get_stats pour le joueur : {player_name}', player_name=player_name)
+        logfire.info('Utilisation de get_player_stats pour le joueur : {player_name}', player_name=player_name)
 
         base_path = Path(__file__).parent.parent
         db_path = base_path / "database" / "database.sqlite"
@@ -122,14 +188,41 @@ class Rag:
 
         logfire.info('Résultat de la requête pour le joueur {player_name} : {result}', player_name=player_name, result=result)
 
-        return str([dict(r) for r in result]) if result else f"Aucune statistique trouvée pour le joueur '{player_name}'."
+        result_text = str([dict(r) for r in result]) if result else f"Aucune statistique trouvée pour le joueur '{player_name}'."
+        self._sql_results.append(SqlQueryResult(
+            query=f"get_player_stats(player_name={player_name!r})",
+            result=result_text,
+        ))
+        return result_text
+
+    def query_database(self, ctx: RunContext[str], query: str) -> str:
+        """Exécute une requête SQL sur la base de données SQLite et retourne le résultat."""
+        logfire.info('Exécution de la requête SQL : {query}', query=query)
+
+        base_path = Path(__file__).parent.parent
+        db_path = base_path / "database" / "database.sqlite"
+        engine = create_engine(f"sqlite:///{db_path.resolve()}")
+
+        with Session(engine) as session:
+            try:
+                stmt = text(query)
+                result = session.execute(stmt).mappings().fetchall()
+                logfire.info('Résultat de la requête SQL : {result}', result=result)
+                result_text = str([dict(r) for r in result]) if result else "Aucun résultat trouvé pour cette requête."
+                self._sql_results.append(SqlQueryResult(query=query, result=result_text))
+                return result_text
+            except Exception as e:
+                logfire.error('Erreur lors de l\'exécution de la requête SQL : {error}', error=str(e))
+                return f"Erreur lors de l'exécution de la requête SQL : {str(e)}"
 
     def index_search(self, ctx: RunContext[str], query: str) -> List[RetrievedContext]:
         """Recherche des extraits qualitatifs/textuels dans la base de connaissance"""
         logfire.info('Recherche de contexte pour la question : {question}', question=query)
 
         try:
-            return self.vector_store.search(query, k=5)
+            results = self.vector_store.search(query, k=5)
+            self._retrieved_contexts.extend(results)
+            return results
         except Exception:
             logging.exception(f"Erreur pendant la recherche de contexte pour: '{query}'")
             return []
@@ -163,10 +256,16 @@ class Rag:
 
         logfire.info('Pipeline RAG exécuté pour la question : {question}', question=question)
 
+        # Réinitialisation du contexte accumulé pour cette nouvelle question.
+        self._retrieved_contexts = []
+        self._sql_results = []
+
         answer_text = self.generate(question)
-        #sources = sorted({c.source for c in context})
-       #confidence = max((c.score for c in context), default=0.0) / 100
 
         logfire.info('Answer : {answer}', answer=answer_text)
 
-        return RagAnswer(answer=answer_text)
+        return RagAnswer(
+            answer=answer_text,
+            retrieved_contexts=self._retrieved_contexts,
+            sql_results=self._sql_results,
+        )
